@@ -1,0 +1,10 @@
+build:
+  memory_limit: 4Gi
+  timeout_minutes: 10
+  retry_count: 2
+  environment:
+    NODE_ENV: production
+    GENKIT_ENV: dev
+  optimization:
+    splitting: true
+    caching: true

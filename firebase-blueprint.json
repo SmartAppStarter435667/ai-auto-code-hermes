@@ -1,0 +1,36 @@
+
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information and subscription status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "subscriptionTier": { 
+          "type": "string", 
+          "enum": ["free", "pro", "enterprise"],
+          "description": "The current subscription level"
+        },
+        "tokensUsed": { "type": "number", "description": "AI tokens consumed this month" },
+        "buildMinutesUsed": { "type": "number", "description": "Sandbox build minutes used this month" },
+        "maxTokens": { "type": "number" },
+        "maxBuildMinutes": { "type": "number" }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "auth": {
+    "providers": ["google.com", "password"]
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/backend/entities/UserProfile" },
+      "description": "User profile document"
+    }
+  }
+}

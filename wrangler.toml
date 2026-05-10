@@ -1,0 +1,26 @@
+name = "cursor-app-backend"
+main = "src/index.ts"
+compatibility_date = "2024-03-01"
+
+# Workers AI binding
+[ai]
+binding = "AI"
+
+# D1 Database (Replacement for Firestore)
+[[d1_databases]]
+binding = "DB"
+database_name = "cursor-app-db"
+database_id = "your-d1-id-here"
+
+# R2 Buckets (Replacement for Firebase Storage)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cursor-app-storage"
+
+# KV Namespaces (Replacement for Config/Session)
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "your-kv-id-here"
+
+[observability]
+enabled = true
