@@ -1,0 +1,103 @@
+name: Deploy Daytona (OCI Terraform)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/oci-daytona/**'
+      - '.github/workflows/deploy-oci-daytona.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/oci-daytona/**'
+  workflow_dispatch:
+
+concurrency:
+  group: oci-daytona-terraform
+  cancel-in-progress: false # never cancel a mid-flight apply
+
+defaults:
+  run:
+    working-directory: infra/oci-daytona
+
+env:
+  TF_VAR_oci_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
+  TF_VAR_oci_user_ocid:        ${{ secrets.OCI_USER_OCID }}
+  TF_VAR_oci_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
+  TF_VAR_oci_region:           ${{ secrets.OCI_REGION }}
+  TF_VAR_compartment_ocid:     ${{ secrets.OCI_COMPARTMENT_OCID }}
+  TF_VAR_ssh_public_key:       ${{ secrets.DAYTONA_SSH_PUBLIC_KEY }}
+  TF_VAR_daytona_domain:       ${{ secrets.DAYTONA_DOMAIN }}
+  TF_VAR_manage_cloudflare_dns: "true"
+  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  TF_VAR_cloudflare_zone_id:   ${{ secrets.CLOUDFLARE_ZONE_ID }}
+  # oci_private_key_path is set below once the key is written to disk
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write OCI API private key
+        run: |
+          mkdir -p "$HOME/.oci"
+          printf '%s' "${{ secrets.OCI_PRIVATE_KEY }}" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          echo "TF_VAR_oci_private_key_path=$HOME/.oci/oci_api_key.pem" >> "$GITHUB_ENV"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.5'
+
+      - name: Terraform fmt (check only)
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -input=false -no-color -out=tfplan
+        continue-on-error: true
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan — infra/oci-daytona
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output.slice(0, 65000),
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Print next manual step
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "### Daytona host provisioned" >> "$GITHUB_STEP_SUMMARY"
+          echo "Public IP: $(terraform output -raw public_ip)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "SSH in and run \`cat /opt/daytona/README-DEPLOY.md\` to finish the interactive setup wizard." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up private key
+        if: always()
+        run: rm -f "$HOME/.oci/oci_api_key.pem"

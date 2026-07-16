@@ -1,0 +1,30 @@
+# infra/oci-daytona/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in. Never commit terraform.tfvars itself.
+
+# ── OCI auth (API key — Console → Profile → API Keys → Add API Key) ────────
+oci_tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+oci_user_ocid        = "ocid1.user.oc1..aaaaaaaaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+oci_fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+oci_private_key_path = "~/.oci/oci_api_key.pem"
+oci_region           = "ap-tokyo-1"
+compartment_ocid     = "ocid1.tenancy.oc1..aaaaaaaaXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" # root compartment OCID is fine solo
+
+# ── Sizing (defaults fit Always Free — only change if on PAYG) ─────────────
+instance_ocpus       = 2
+instance_memory_gbs  = 12
+boot_volume_size_gbs = 50
+data_volume_size_gbs = 50
+
+# ── Access ──────────────────────────────────────────────────────────────────
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... daytona-oci"
+ssh_admin_cidr = "203.0.113.10/32" # your IP — avoid 0.0.0.0/0 in production
+
+# ── Daytona domain ──────────────────────────────────────────────────────────
+daytona_domain  = "daytona.yourdomain.com"
+github_repo_url = "https://github.com/daytonaio/daytona.git"
+daytona_git_ref = "main" # repo is frozen as of June 2026; pin to a commit SHA once verified
+
+# ── Optional: let Terraform manage Cloudflare DNS records too ──────────────
+manage_cloudflare_dns = false
+# cloudflare_api_token = "..."   # Zone:DNS:Edit scope only
+# cloudflare_zone_id   = "..."
