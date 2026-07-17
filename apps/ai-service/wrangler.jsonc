@@ -1,0 +1,54 @@
+// apps/ai-service/wrangler.jsonc
+{
+  "name": "hermes-ai-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HERMES_AGENT",
+        "class_name": "HermesAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HermesAgent"]
+    }
+  ],
+
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "hermes-knowledge"
+    }
+  ],
+
+  "ai": {
+    "binding": "AI"
+  },
+
+  "vars": {
+    "GIT_SERVICE_URL": "https://hermes-git.pages.dev",
+    "PREVIEW_SERVICE_URL": "https://hermes-preview.pages.dev",
+    "ALLOWED_ORIGINS": "https://hermes-git.pages.dev,https://hermes-preview.pages.dev,http://localhost:3000"
+  }
+
+  // ── Secrets (set via `wrangler secret put`) ───────────────────────────────
+  // ANTHROPIC_API_KEY
+  // MEM0_API_KEY
+  // GITHUB_TOKEN
+  // DAYTONA_API_KEY
+  // DAYTONA_SERVER_URL
+  // CI_AUTOPILOT_SECRET   — new: shared secret for POST /ci-fix.
+  //   Generate with: openssl rand -hex 32
+  //   Must match the same value used for CI_AUTOPILOT_SECRET in the
+  //   ci-autopilot.yml GitHub Actions secret.
+}

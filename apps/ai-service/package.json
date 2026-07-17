@@ -1,0 +1,21 @@
+{
+  "name": "hermes-ai-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "vectorize:create": "wrangler vectorize create hermes-knowledge --dimensions=384 --metric=cosine"
+  },
+  "dependencies": {
+    "agents": "^0.0.93",
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@octokit/rest": "^21.0.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.109.0"
+  }
+}
