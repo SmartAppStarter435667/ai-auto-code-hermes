@@ -1,9 +1,22 @@
 name: Cloudflare Full Stack Deploy
 
+# PAUSED — was `on: push: branches: [main]`.
+#
+# This workflow deploys two things that aren't actually finished:
+#   - Pages project "cursor-app-frontend" (doesn't exist in Cloudflare yet)
+#   - Worker "cursor-app-backend" (root wrangler.toml points at src/index.ts,
+#     which doesn't exist — root src/ is the Next.js app — and has an
+#     unfilled placeholder database_id = "your-d1-id-here")
+#
+# Both look like an incomplete scaffold, not a CI misconfiguration — patching
+# the trigger error just surfaces the next one. Switched to manual dispatch
+# so it stops failing on every push while that gets sorted out, without
+# deleting anything. To re-enable automatic deploys, change this back to:
+#   on:
+#     push:
+#       branches: [main]
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   deploy-backend:
