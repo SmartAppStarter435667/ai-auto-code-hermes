@@ -16,15 +16,15 @@ resource "cloudflare_pages_project" "git_ops_app" {
   name              = "${var.project_name}-git-ops"
   production_branch = "main"
 
-  deployment_configs {
-    production {
+  deployment_configs = {
+    production = {
       environment_variables = {
         NEXT_PUBLIC_APP_ENV     = "production"
         NEXT_PUBLIC_API_URL     = "https://${var.project_name}-ai-api.workers.dev"     # TODO: confirm real Worker name
         NEXT_PUBLIC_DAYTONA_URL = "https://${var.project_name}-daytona.pages.dev"
       }
     }
-    preview {
+    preview = {
       environment_variables = {
         NEXT_PUBLIC_APP_ENV     = "preview"
         NEXT_PUBLIC_API_URL     = "https://${var.project_name}-ai-api-preview.workers.dev" # TODO: confirm real Worker name

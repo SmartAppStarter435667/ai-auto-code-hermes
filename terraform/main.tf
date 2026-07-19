@@ -42,7 +42,7 @@ resource "cloudflare_r2_bucket" "ai_logs" {
 
 resource "cloudflare_queue" "log_queue" {
   account_id = var.account_id
-  name       = "${var.project_name}-log-queue"
+  queue_name = "${var.project_name}-log-queue" # was `name` — v5 renamed this argument
 }
 
 output "ai_cache_kv_id" {

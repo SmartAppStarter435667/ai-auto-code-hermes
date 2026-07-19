@@ -25,15 +25,15 @@ resource "cloudflare_pages_project" "daytona_preview_app" {
   name              = "${var.project_name}-daytona"
   production_branch = "main"
 
-  deployment_configs {
-    production {
+  deployment_configs = {
+    production = {
       environment_variables = {
         DAYTONA_SERVER_URL      = "https://daytona.cursor.internal" # TODO: real value
         DAYTONA_TARGET_PROVIDER = "cloudflare"
         ENABLE_AUTO_HEALING     = "true"
       }
     }
-    preview {
+    preview = {
       environment_variables = {
         DAYTONA_SERVER_URL      = "https://daytona-preview.cursor.internal" # TODO: real value
         DAYTONA_TARGET_PROVIDER = "cloudflare"
