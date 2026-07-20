@@ -1,0 +1,39 @@
+// apps/ai-service/wrangler.jsonc
+{
+  "name": "hermes-ai-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  "durable_objects": {
+    "bindings": [{ "name": "HERMES_AGENT", "class_name": "HermesAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HermesAgent"] }],
+
+  "vectorize": [{ "binding": "VECTORIZE", "index_name": "hermes-knowledge" }],
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    "GIT_SERVICE_URL": "https://hermes-git.pages.dev",
+    "PREVIEW_SERVICE_URL": "https://hermes-preview.pages.dev",
+    "ALLOWED_ORIGINS": "https://hermes-git.pages.dev,https://hermes-preview.pages.dev,http://localhost:3000",
+    // Non-secret — safe here. Flip to "nvidia" to use the free
+    // build.nvidia.com catalog for the interactive chat instead of Claude.
+    // ciFix.ts (CI autofix) ignores this and always uses Anthropic.
+    "AI_PROVIDER": "anthropic",
+    // Change this to swap models without touching code — see
+    // src/agent/providers/nvidia.ts for the currently-confirmed catalog.
+    "NVIDIA_MODEL_ID": "deepseek-ai/deepseek-v4-pro"
+  }
+
+  // ── Secrets (set via `wrangler secret put`) ───────────────────────────────
+  // ANTHROPIC_API_KEY
+  // MEM0_API_KEY
+  // GITHUB_TOKEN
+  // DAYTONA_API_KEY
+  // DAYTONA_SERVER_URL
+  // CI_AUTOPILOT_SECRET
+  // NVIDIA_API_KEY      — new: from build.nvidia.com → Get API Key (nvapi-…)
+  //   Only required if AI_PROVIDER is set to "nvidia".
+}
