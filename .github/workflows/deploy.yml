@@ -37,6 +37,11 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy .next --project-name=cursor-edge-ai-git-ops
 
+      - name: Health check
+        run: |
+          chmod +x .github/scripts/health-check.sh
+          .github/scripts/health-check.sh pages cursor-edge-ai-git-ops
+
   # Job 2: Deploy Workers AI & SQLite Durable Object to Cloudflare Worker edge
   deploy-edge-ai:
     name: Deploy Workers AI Microservice
@@ -57,6 +62,11 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: 'src/workers/edge-ai-platform'
           command: deploy
+
+      - name: Health check
+        run: |
+          chmod +x .github/scripts/health-check.sh
+          .github/scripts/health-check.sh worker cursor-edge-ai-platform "${{ secrets.CLOUDFLARE_API_TOKEN }}" "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
 
   # Job 3: Build & Deploy Daytona environments manager to new Pages Project
   deploy-daytona-preview:
@@ -87,3 +97,8 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=cursor-edge-ai-daytona
+
+      - name: Health check
+        run: |
+          chmod +x .github/scripts/health-check.sh
+          .github/scripts/health-check.sh pages cursor-edge-ai-daytona

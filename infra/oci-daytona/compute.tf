@@ -1,8 +1,5 @@
-# infra/oci-daytona/compute.tf
+// infra/oci-daytona/compute.tf
 
-# Latest Canonical Ubuntu 22.04 image for the Ampere (aarch64) shape family.
-# Queried dynamically rather than hardcoding an image OCID, since image OCIDs
-# are region-specific and rotate as Canonical ships updates.
 data "oci_core_images" "ubuntu_arm" {
   compartment_id           = var.compartment_ocid
   operating_system         = "Canonical Ubuntu"
@@ -44,12 +41,22 @@ resource "oci_core_instance" "daytona_host" {
   }
 
   metadata = {
-    ssh_authorized_keys = var.ssh_public_key
+    # FIX: was `var.ssh_public_key` directly. OCI's LaunchInstance API is
+    # strict about ssh_authorized_keys format — a single line, no leading/
+    # trailing whitespace or embedded newlines. trimspace() only handles
+    # leading/trailing whitespace (including a trailing newline from a
+    # `cat file.pub` copy-paste, the single most common cause). It can't
+    # fix a key that got wrapped across multiple actual newlines when it
+    # was copied into the GitHub secret — if this still 400s after
+    # redeploying, re-copy the key with:
+    #   cat ~/.ssh/id_ed25519.pub | tr -d '\n' | pbcopy   (or xclip on Linux)
+    # to guarantee no embedded line breaks before pasting into the secret.
+    ssh_authorized_keys = trimspace(var.ssh_public_key)
     user_data = base64encode(templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
       daytona_domain   = var.daytona_domain
       github_repo_url  = var.github_repo_url
       daytona_git_ref  = var.daytona_git_ref
-      data_volume_path = "/dev/oracleoci/oraclevdb" # paravirtualized attach mounts here
+      data_volume_path = "/dev/oracleoci/oraclevdb"
     }))
   }
 
@@ -57,7 +64,7 @@ resource "oci_core_instance" "daytona_host" {
 
   lifecycle {
     ignore_changes = [
-      metadata["user_data"], # avoid replacing the instance on unrelated re-renders
+      metadata["user_data"],
     ]
   }
 }
