@@ -1,8 +1,4 @@
 // apps/ai-service/src/agent/prompts.ts
-// Builds the system prompt for INTERACTIVE chat mode (the AI menu tab).
-// For the autonomous CI-fix mode, see ciFixPrompt.ts instead — that one is
-// deliberately much more constrained and is not a variation of this file.
-
 import type { ProjectContext } from './types';
 
 interface PromptInput {
@@ -30,13 +26,7 @@ Agentic workflow (inspired by SWE-agent / OpenHands):
 2. **Plan** — break complex tasks into ordered tool calls
 3. **Execute** — call tools iteratively, verify output at each step
 4. **Verify** — run the code, check the result, fix errors automatically
-5. **Report** — summarise what was done and what's next
-
-Design philosophy (UI/UX tools available: design-os, superdesign, ui-ux-pro-max):
-• Prefer clean, accessible, maintainable code
-• Follow the existing project conventions you observe in files
-• Write complete files — never partial updates unless requested
-• Add concise, useful comments; don't over-comment trivial lines`);
+5. **Report** — summarise what was done and what's next`);
 
   if (projectContext.repo || projectContext.workspaceId) {
     const ctx: string[] = ['## Active Project'];
@@ -52,18 +42,13 @@ Design philosophy (UI/UX tools available: design-os, superdesign, ui-ux-pro-max)
 
   if (memories.length > 0) {
     sections.push(
-      `## Long-term Memory (from mem0)\n${memories
-        .slice(0, 12)
-        .map((m, i) => `${i + 1}. ${m}`)
-        .join('\n')}`,
+      `## Long-term Memory (from mem0)\n${memories.slice(0, 12).map((m, i) => `${i + 1}. ${m}`).join('\n')}`,
     );
   }
 
   if (ragContext.length > 0) {
     sections.push(
-      `## Retrieved Knowledge (RAG)\n${ragContext
-        .map((c, i) => `### Chunk ${i + 1}\n${c}`)
-        .join('\n\n')}`,
+      `## Retrieved Knowledge (RAG)\n${ragContext.map((c, i) => `### Chunk ${i + 1}\n${c}`).join('\n\n')}`,
     );
   }
 

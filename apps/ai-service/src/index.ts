@@ -6,6 +6,7 @@
 import { routeAgentRequest } from 'agents';
 import { HermesAgent } from './agent/HermesAgent';
 import { handleCiFix, type CiFixRequest } from './ciFix';
+import { MODEL_CATALOG } from './agent/modelCatalog';
 
 export { HermesAgent };
 
@@ -21,10 +22,14 @@ export interface Env {
   GIT_SERVICE_URL: string;
   PREVIEW_SERVICE_URL: string;
   ALLOWED_ORIGINS: string;
-  // Shared secret checked against the X-CI-Autopilot-Secret header on
-  // POST /ci-fix. Without this, anyone who finds the Worker URL could
-  // trigger arbitrarily many agent runs against your Anthropic bill.
   CI_AUTOPILOT_SECRET: string;
+
+  // Model provider selection for the INTERACTIVE chat loop only.
+  // ciFix.ts (unattended CI autofix) deliberately always uses Anthropic
+  // regardless of this setting — see that file's comment for why.
+  AI_PROVIDER?: 'anthropic' | 'nvidia'; // defaults to 'anthropic' if unset
+  NVIDIA_API_KEY: string;
+  NVIDIA_MODEL_ID?: string; // defaults to deepseek-ai/deepseek-v4-pro — see providers/nvidia.ts
 }
 
 const CORS_HEADERS = {
@@ -51,8 +56,20 @@ export default {
 
     if (url.pathname === '/health') {
       return withCors(
-        Response.json({ status: 'ok', service: 'hermes-ai-service', timestamp: new Date().toISOString() }),
+        Response.json({
+          status: 'ok',
+          service: 'hermes-ai-service',
+          provider: env.AI_PROVIDER ?? 'anthropic',
+          timestamp: new Date().toISOString(),
+        }),
       );
+    }
+
+    if (url.pathname === '/models' && request.method === 'GET') {
+      // Read live from modelCatalog.ts, not cached — model-watch.yml opens
+      // PRs against that file directly, so a new deploy is always the
+      // freshest source. No KV/extra binding needed for this.
+      return withCors(Response.json({ models: MODEL_CATALOG }));
     }
 
     if (url.pathname === '/ingest' && request.method === 'POST') {
@@ -66,11 +83,6 @@ export default {
       }
     }
 
-    // ── Stage 3: CI Auto-Fix webhook ─────────────────────────────────────
-    // Called by .github/workflows/ci-autopilot.yml right after it creates
-    // a new ci-failure issue. Runs the constrained autofix agent to
-    // completion and returns its summary; the agent itself posts the
-    // detailed comment on the issue as it finishes (see ciFix.ts).
     if (url.pathname === '/ci-fix' && request.method === 'POST') {
       const secret = request.headers.get('X-CI-Autopilot-Secret');
       if (!env.CI_AUTOPILOT_SECRET || secret !== env.CI_AUTOPILOT_SECRET) {
@@ -84,8 +96,6 @@ export default {
       }
     }
 
-    // All /agents/* traffic (interactive chat) is routed by the agents SDK,
-    // handling both HTTP and WebSocket upgrade requests.
     const agentResponse = await routeAgentRequest(request, env);
     if (agentResponse) {
       return withCors(agentResponse);

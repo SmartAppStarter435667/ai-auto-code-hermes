@@ -1,0 +1,96 @@
+name: Model Watch (GLM / MiniMax / Kimi)
+
+# Runs daily; also runnable on demand. Checks build.nvidia.com for a newer
+# patch of the three watched model families and, if one exists, opens a PR
+# bumping apps/ai-service/src/agent/modelCatalog.ts plus a tracking issue
+# as the notification. Deliberately does NOT auto-merge — same "detect,
+# open PR, human reviews" pattern as ci-autopilot.yml, since a model swap
+# changes real runtime behavior and deserves a look before it ships.
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily, off the hour to avoid GitHub's peak-load minute
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for newer patch versions
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: node .github/scripts/check-model-updates.mjs
+
+      - name: Read findings
+        id: findings
+        run: |
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('model-updates.json','utf8')).length)")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Apply bumps to modelCatalog.ts
+        if: steps.findings.outputs.count != '0'
+        id: apply
+        run: |
+          node -e "
+            const fs = require('fs');
+            const updates = JSON.parse(fs.readFileSync('model-updates.json', 'utf8'));
+            let src = fs.readFileSync('apps/ai-service/src/agent/modelCatalog.ts', 'utf8');
+            const summary = [];
+            for (const u of updates) {
+              src = src.split(u.from).join(u.to);
+              summary.push(\`\${u.familyId}: \${u.from} → \${u.to}\`);
+            }
+            fs.writeFileSync('apps/ai-service/src/agent/modelCatalog.ts', src);
+            fs.writeFileSync('model-update-summary.txt', summary.join('\n'));
+          "
+          echo "branch=model-watch/$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        if: steps.findings.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SUMMARY=$(cat model-update-summary.txt)
+          BRANCH="${{ steps.apply.outputs.branch }}"
+
+          git config user.name "model-watch-bot"
+          git config user.email "actions@github.com"
+          git checkout -b "$BRANCH"
+          git add apps/ai-service/src/agent/modelCatalog.ts
+          git commit -m "chore(models): bump watched model versions
+
+          $SUMMARY"
+          git push origin "$BRANCH"
+
+          PR_BODY="Automated patch-version bump for watched model families (GLM / MiniMax / Kimi).
+
+          \`\`\`
+          $SUMMARY
+          \`\`\`
+
+          Detected via build.nvidia.com's model listing. Review the diff in \`modelCatalog.ts\` before merging — this changes what the NVIDIA_MODEL_ID default resolves to for these entries. Not auto-merged on purpose."
+
+          gh pr create \
+            --title "chore(models): patch version bump — $SUMMARY" \
+            --body "$PR_BODY" \
+            --base main \
+            --head "$BRANCH" \
+            --label "model-watch,auto-generated"
+
+      - name: Post notification issue
+        if: steps.findings.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SUMMARY=$(cat model-update-summary.txt)
+          gh issue create \
+            --title "Model update available: $SUMMARY" \
+            --body "A PR bumping the watched model catalog was just opened — see the model-watch label for the PR. $SUMMARY" \
+            --label "model-watch,notification"

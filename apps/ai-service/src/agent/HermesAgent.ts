@@ -1,13 +1,4 @@
 // apps/ai-service/src/agent/HermesAgent.ts
-//
-// Hermes: Agentic RAG coding assistant (interactive chat mode)
-// ─ Long-term memory via mem0ai
-// ─ RAG retrieval from Cloudflare Vectorize
-// ─ Agentic tool-calling loop — now delegated to agenticLoop.ts, shared with
-//   the one-shot CI Auto-Fix path in ciFix.ts (see that file's header for why)
-// ─ Streaming via Anthropic SDK
-// ─ State persisted in Durable Object SQLite (via agents SDK)
-
 import { Agent, type Connection } from 'agents';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Env } from '../index';
@@ -19,12 +10,7 @@ import type { AgentState, WSMessage, ChatMessage } from './types';
 
 const MEM0_BASE = 'https://api.mem0.ai/v1';
 
-async function mem0Search(
-  apiKey: string,
-  query: string,
-  userId: string,
-  limit = 10,
-): Promise<Array<{ memory: string }>> {
+async function mem0Search(apiKey: string, query: string, userId: string, limit = 10): Promise<Array<{ memory: string }>> {
   const res = await fetch(`${MEM0_BASE}/memories/search/`, {
     method: 'POST',
     headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
@@ -35,12 +21,7 @@ async function mem0Search(
   return Array.isArray(data) ? data : [];
 }
 
-async function mem0Add(
-  apiKey: string,
-  messages: Array<{ role: string; content: string }>,
-  userId: string,
-  metadata?: Record<string, unknown>,
-): Promise<void> {
+async function mem0Add(apiKey: string, messages: Array<{ role: string; content: string }>, userId: string, metadata?: Record<string, unknown>): Promise<void> {
   await fetch(`${MEM0_BASE}/memories/`, {
     method: 'POST',
     headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
@@ -49,10 +30,7 @@ async function mem0Add(
 }
 
 async function mem0DeleteAll(apiKey: string, userId: string): Promise<void> {
-  await fetch(`${MEM0_BASE}/memories/?user_id=${userId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Token ${apiKey}` },
-  });
+  await fetch(`${MEM0_BASE}/memories/?user_id=${userId}`, { method: 'DELETE', headers: { Authorization: `Token ${apiKey}` } });
 }
 
 export class HermesAgent extends Agent<Env, AgentState> {
@@ -65,16 +43,11 @@ export class HermesAgent extends Agent<Env, AgentState> {
 
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
-    if (url.pathname.endsWith('/state')) {
-      return Response.json(this.state ?? this.defaultState('anonymous'));
-    }
+    if (url.pathname.endsWith('/state')) return Response.json(this.state ?? this.defaultState('anonymous'));
 
     if (url.pathname.endsWith('/memories') && request.method === 'GET') {
       const userId = url.searchParams.get('userId') ?? 'default';
-      const res = await fetch(`${MEM0_BASE}/memories/?user_id=${userId}`, {
-        headers: { Authorization: `Token ${this.env.MEM0_API_KEY}` },
-      });
+      const res = await fetch(`${MEM0_BASE}/memories/?user_id=${userId}`, { headers: { Authorization: `Token ${this.env.MEM0_API_KEY}` } });
       const data = res.ok ? await res.json() : [];
       return Response.json({ memories: data });
     }
@@ -110,15 +83,16 @@ export class HermesAgent extends Agent<Env, AgentState> {
         });
         break;
       case 'ingest':
-        await this.handleIngest(connection, msg).catch((err) => {
-          this.send(connection, { type: 'error', message: String(err) });
-        });
+        await this.handleIngest(connection, msg).catch((err) => this.send(connection, { type: 'error', message: String(err) }));
         break;
       case 'clear_memory':
         await this.handleClearMemory(connection, msg);
         break;
       case 'set_context':
         await this.handleSetContext(connection, msg);
+        break;
+      case 'set_model':
+        await this.handleSetModel(connection, msg);
         break;
       case 'ping':
         this.send(connection, { type: 'pong' });
@@ -144,46 +118,36 @@ export class HermesAgent extends Agent<Env, AgentState> {
     const state: AgentState = this.state ?? this.defaultState(userId, sessionId);
 
     let memories: Array<{ memory: string }> = [];
-    try {
-      memories = await mem0Search(this.env.MEM0_API_KEY, userContent, userId);
-    } catch (err) {
-      console.warn('[mem0] search failed:', err);
-    }
+    try { memories = await mem0Search(this.env.MEM0_API_KEY, userContent, userId); }
+    catch (err) { console.warn('[mem0] search failed:', err); }
 
     let ragContext: string[] = [];
-    try {
-      ragContext = await queryRAG(this.env, userContent, 5);
-    } catch (err) {
-      console.warn('[RAG] query failed:', err);
-    }
+    try { ragContext = await queryRAG(this.env, userContent, 5); }
+    catch (err) { console.warn('[RAG] query failed:', err); }
 
     const systemPrompt = buildSystemPrompt({
-      memories: memories.map((m) => m.memory),
-      ragContext,
-      projectContext: state.projectContext,
+      memories: memories.map((m) => m.memory), ragContext, projectContext: state.projectContext,
     });
 
-    const historyMessages: Anthropic.MessageParam[] = state.messages
-      .slice(-30)
-      .map((m) => ({ role: m.role, content: m.content }));
+    const historyMessages: Anthropic.MessageParam[] = state.messages.slice(-30).map((m) => ({ role: m.role, content: m.content }));
     historyMessages.push({ role: 'user', content: userContent });
 
     const tools = buildTools(state.projectContext);
 
     this.send(connection, { type: 'stream_start', sessionId });
 
-    // Delegate to the shared loop — this Agent's only job now is to forward
-    // loop events onto the live WebSocket connection.
     const forwardEvent = (e: AgentLoopEvent) => {
-      if (e.type === 'stream_chunk') {
-        this.send(connection, { type: 'stream_chunk', content: e.content, sessionId });
-      } else if (e.type === 'tool_call') {
-        this.send(connection, { type: 'tool_call', sessionId, tool: e.tool, input: e.input });
-      } else if (e.type === 'tool_result') {
-        this.send(connection, { type: 'tool_result', sessionId, tool: e.tool, result: e.result, isError: e.isError });
-      }
+      if (e.type === 'stream_chunk') this.send(connection, { type: 'stream_chunk', content: e.content, sessionId });
+      else if (e.type === 'tool_call') this.send(connection, { type: 'tool_call', sessionId, tool: e.tool, input: e.input });
+      else if (e.type === 'tool_result') this.send(connection, { type: 'tool_result', sessionId, tool: e.tool, result: e.result, isError: e.isError });
     };
 
+    // AI_PROVIDER selects the interactive chat brain — 'nvidia' routes to
+    // the free build.nvidia.com catalog (see agenticLoop.ts / providers/nvidia.ts).
+    // Unset/'anthropic' keeps Claude, the default.
+    // Per-session model choice (set via the frontend picker) overrides the
+    // deploy-time env.AI_PROVIDER default. Unset -> env default -> Claude.
+    const modelSelection = state.modelSelection;
     const { finalResponse, toolCallsLog } = await runAgenticLoop({
       anthropic: this.anthropic,
       env: this.env,
@@ -191,6 +155,8 @@ export class HermesAgent extends Agent<Env, AgentState> {
       messages: historyMessages,
       tools,
       maxIterations: 12,
+      provider: modelSelection?.provider ?? this.env.AI_PROVIDER ?? 'anthropic',
+      nvidiaModelId: modelSelection?.nvidiaModelId,
       onEvent: forwardEvent,
     });
 
@@ -202,24 +168,16 @@ export class HermesAgent extends Agent<Env, AgentState> {
 
     this.setState({ ...state, messages: newMessages, lastActive: Date.now() });
 
-    mem0Add(
-      this.env.MEM0_API_KEY,
-      [
-        { role: 'user', content: userContent },
-        { role: 'assistant', content: finalResponse },
-      ],
-      userId,
-      { repo: state.projectContext.repo, ts: new Date().toISOString() },
+    mem0Add(this.env.MEM0_API_KEY,
+      [{ role: 'user', content: userContent }, { role: 'assistant', content: finalResponse }],
+      userId, { repo: state.projectContext.repo, ts: new Date().toISOString() },
     ).catch((err) => console.warn('[mem0] add failed:', err));
 
     this.send(connection, { type: 'stream_end', sessionId, toolCallsLog });
   }
 
   private async handleIngest(connection: Connection, msg: WSMessage): Promise<void> {
-    if (!msg.text) {
-      this.send(connection, { type: 'error', message: 'No text provided' });
-      return;
-    }
+    if (!msg.text) { this.send(connection, { type: 'error', message: 'No text provided' }); return; }
     await ingestDocument(this.env, msg.text, msg.metadata ?? {});
     this.send(connection, { type: 'ingest_success' });
   }
@@ -242,17 +200,18 @@ export class HermesAgent extends Agent<Env, AgentState> {
     this.send(connection, { type: 'context_updated', context: state.projectContext });
   }
 
+  private async handleSetModel(connection: Connection, msg: WSMessage): Promise<void> {
+    if (!msg.model) { this.send(connection, { type: 'error', message: 'model required' }); return; }
+    const state = this.state ?? this.defaultState(msg.userId ?? 'default');
+    this.setState({ ...state, modelSelection: msg.model });
+    this.send(connection, { type: 'model_updated', model: msg.model });
+  }
+
   private send(connection: Connection, data: unknown): void {
     connection.send(JSON.stringify(data));
   }
 
   private defaultState(userId: string, sessionId?: string): AgentState {
-    return {
-      messages: [],
-      userId,
-      sessionId: sessionId ?? crypto.randomUUID(),
-      projectContext: {},
-      lastActive: Date.now(),
-    };
+    return { messages: [], userId, sessionId: sessionId ?? crypto.randomUUID(), projectContext: {}, lastActive: Date.now() };
   }
 }

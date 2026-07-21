@@ -1,20 +1,22 @@
 // apps/ai-service/src/agent/agenticLoop.ts
 //
-// The core tool-calling loop, extracted so it has exactly one implementation
-// shared by:
-//   - HermesAgent (interactive WebSocket chat)
-//   - ciFix.ts (one-shot, unattended CI autofix runs)
-//
-// Previously this lived as a private method on HermesAgent, hard-wired to
-// `connection.send`. That's fine for a Durable Object with a live WebSocket,
-// but ciFix.ts has no connection — it's a plain Worker fetch handler running
-// once and returning a result. Rather than copy-pasting the loop (and having
-// the two copies drift), callers now pass an `onEvent` callback; HermesAgent
-// forwards events to its WebSocket, ciFix.ts just collects them.
+// The core tool-calling loop, shared by HermesAgent (interactive chat) and
+// ciFix.ts (one-shot CI autofix). Callers always build/store conversation
+// history in Anthropic.MessageParam[] shape — that stays the one canonical
+// format for chat state (mem0, Durable Object state, etc.). Provider choice
+// is purely an internal concern of THIS file: when provider is 'nvidia',
+// history gets converted to OpenAI shape for that call and back again,
+// external callers never need to know or care.
 
 import Anthropic from '@anthropic-ai/sdk';
 import type { Env } from '../index';
 import { executeTool } from '../tools/index';
+import {
+  callNvidiaChat,
+  anthropicMessagesToOpenAI,
+  DEFAULT_NVIDIA_MODEL,
+  type OAIMessage,
+} from './providers/nvidia';
 
 export interface AgentLoopEvent {
   type: 'stream_chunk' | 'tool_call' | 'tool_result';
@@ -25,6 +27,8 @@ export interface AgentLoopEvent {
   isError?: boolean;
 }
 
+export type AiProvider = 'anthropic' | 'nvidia';
+
 export interface AgenticLoopParams {
   anthropic: Anthropic;
   env: Env;
@@ -33,6 +37,8 @@ export interface AgenticLoopParams {
   tools: Anthropic.Tool[];
   maxIterations?: number;
   model?: string;
+  provider?: AiProvider; // defaults to 'anthropic'
+  nvidiaModelId?: string; // per-call override; falls back to env.NVIDIA_MODEL_ID, then the hardcoded default
   onEvent?: (event: AgentLoopEvent) => void;
 }
 
@@ -46,6 +52,19 @@ const DEFAULT_MODEL = 'claude-opus-4-20250514';
 const DEFAULT_MAX_ITERATIONS = 12;
 
 export async function runAgenticLoop(params: AgenticLoopParams): Promise<AgenticLoopResult> {
+  const provider = params.provider ?? 'anthropic';
+
+  if (provider === 'nvidia') {
+    return runNvidiaLoop(params);
+  }
+  return runAnthropicLoop(params);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Anthropic path (default, tool-calling verified reliable — see HermesAgent)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function runAnthropicLoop(params: AgenticLoopParams): Promise<AgenticLoopResult> {
   const {
     anthropic, env, systemPrompt, tools, onEvent,
     maxIterations = DEFAULT_MAX_ITERATIONS,
@@ -125,14 +144,87 @@ export async function runAgenticLoop(params: AgenticLoopParams): Promise<Agentic
       { role: 'user', content: toolResults },
     ];
 
-    // Out of budget on the LAST allowed iteration: make sure the model knows
-    // this round is its last chance to wrap up, rather than silently cutting
-    // it off mid-plan next loop.
     if (iter === maxIterations - 2) {
       messages.push({
         role: 'user',
         content:
           'You have one tool-call round left after this. If you are not confident the fix is verified, stop here and summarize status instead of rushing.',
+      });
+    }
+  }
+
+  return { finalResponse, toolCallsLog, iterations };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// NVIDIA NIM path — free-tier alternative. Tool-calling reliability varies
+// by open model (see providers/nvidia.ts); malformed tool JSON is surfaced
+// to the model rather than silently dropped, so it can usually self-correct
+// on the next round, but this path is inherently less battle-tested than
+// the Anthropic one for complex multi-step tool sequences.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function runNvidiaLoop(params: AgenticLoopParams): Promise<AgenticLoopResult> {
+  const { env, systemPrompt, tools, onEvent, maxIterations = DEFAULT_MAX_ITERATIONS } = params;
+  const model = params.nvidiaModelId || env.NVIDIA_MODEL_ID || DEFAULT_NVIDIA_MODEL;
+
+  if (!env.NVIDIA_API_KEY) {
+    throw new Error('AI_PROVIDER=nvidia but NVIDIA_API_KEY is not set');
+  }
+
+  let oaiMessages: OAIMessage[] = anthropicMessagesToOpenAI(params.messages, systemPrompt);
+  let finalResponse = '';
+  let iterations = 0;
+  const toolCallsLog: Array<{ tool: string; result: unknown }> = [];
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    iterations = iter + 1;
+
+    const result = await callNvidiaChat({
+      apiKey: env.NVIDIA_API_KEY,
+      model,
+      messages: oaiMessages,
+      tools,
+      onTextChunk: (chunk) => onEvent?.({ type: 'stream_chunk', content: chunk }),
+    });
+
+    oaiMessages = [...oaiMessages, result.assistantMessage];
+
+    if (result.toolCalls.length === 0 || result.stopReason !== 'tool_calls') {
+      finalResponse = result.text;
+      break;
+    }
+
+    for (const tc of result.toolCalls) {
+      onEvent?.({ type: 'tool_call', tool: tc.name, input: tc.input });
+
+      let toolResult: unknown;
+      let isError = false;
+      try {
+        if ('_raw_unparsed' in tc.input) {
+          throw new Error(`Model produced invalid JSON arguments: ${tc.input._raw_unparsed}`);
+        }
+        toolResult = await executeTool(env, tc.name, tc.input);
+      } catch (err) {
+        toolResult = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        isError = true;
+      }
+
+      toolCallsLog.push({ tool: tc.name, result: toolResult });
+      onEvent?.({ type: 'tool_result', tool: tc.name, result: toolResult, isError });
+
+      oaiMessages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult),
+      });
+    }
+
+    if (iter === maxIterations - 2) {
+      oaiMessages.push({
+        role: 'user',
+        content:
+          'One tool-call round left. If the fix is not verified yet, stop and summarize status instead of rushing.',
       });
     }
   }

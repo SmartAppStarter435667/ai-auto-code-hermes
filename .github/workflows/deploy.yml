@@ -35,7 +35,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=cursor-edge-ai-git-ops
+          command: pages deploy .next --project-name=cursor-edge-ai-git-ops
 
   # Job 2: Deploy Workers AI & SQLite Durable Object to Cloudflare Worker edge
   deploy-edge-ai:
