@@ -62,7 +62,7 @@ export const MODEL_CATALOG: ModelCatalogEntry[] = [
     id: 'kimi',
     label: 'Kimi K2.5',
     provider: 'nvidia',
-    modelId: 'moonshotai/kimi-k2',
+    modelId: 'moonshotai/kimi-k2.6',
     watched: true,
     notes: 'NVIDIA model IDs sometimes omit the minor version in the string itself — verify against the model card if a request 404s after a bump.',
   },
