@@ -6,6 +6,7 @@ import { buildSystemPrompt } from './prompts';
 import { buildTools } from '../tools/index';
 import { queryRAG, ingestDocument } from './rag';
 import { runAgenticLoop, type AgentLoopEvent } from './agenticLoop';
+import { runVibeCodingPipeline } from './pipeline/vibeCodingPipeline';
 import type { AgentState, WSMessage, ChatMessage } from './types';
 
 const MEM0_BASE = 'https://api.mem0.ai/v1';
@@ -79,6 +80,12 @@ export class HermesAgent extends Agent<Env, AgentState> {
       case 'chat':
         await this.handleChat(connection, msg).catch((err) => {
           console.error('[HermesAgent] chat error:', err);
+          this.send(connection, { type: 'error', message: String(err) });
+        });
+        break;
+      case 'build':
+        await this.handleBuild(connection, msg).catch((err) => {
+          console.error('[HermesAgent] build error:', err);
           this.send(connection, { type: 'error', message: String(err) });
         });
         break;
@@ -174,6 +181,74 @@ export class HermesAgent extends Agent<Env, AgentState> {
     ).catch((err) => console.warn('[mem0] add failed:', err));
 
     this.send(connection, { type: 'stream_end', sessionId, toolCallsLog });
+  }
+
+  // ── Build mode: spec -> plan -> implement -> suggestions pipeline ────────
+  // Distinct from handleChat rather than a flag on it: a "build me an app"
+  // request and a quick follow-up question warrant genuinely different
+  // handling (four stages vs. one), not the same code path branching on a
+  // boolean deep inside it.
+  private async handleBuild(connection: Connection, msg: WSMessage): Promise<void> {
+    const userId = msg.userId ?? 'default';
+    const sessionId = msg.sessionId ?? crypto.randomUUID();
+    const userContent = msg.content ?? '';
+
+    const state: AgentState = this.state ?? this.defaultState(userId, sessionId);
+
+    let memories: Array<{ memory: string }> = [];
+    try { memories = await mem0Search(this.env.MEM0_API_KEY, userContent, userId); }
+    catch (err) { console.warn('[mem0] search failed:', err); }
+
+    let ragContext: string[] = [];
+    try { ragContext = await queryRAG(this.env, userContent, 5); }
+    catch (err) { console.warn('[RAG] query failed:', err); }
+
+    this.send(connection, { type: 'build_start', sessionId });
+
+    const modelSelection = state.modelSelection;
+    const forwardStageEvent = (e: AgentLoopEvent & { stage?: string }) => {
+      if (e.type === 'stream_chunk') {
+        this.send(connection, { type: 'build_stream_chunk', stage: e.stage, content: e.content, sessionId });
+      } else if (e.type === 'tool_call') {
+        this.send(connection, { type: 'tool_call', stage: e.stage, sessionId, tool: e.tool, input: e.input });
+      } else if (e.type === 'tool_result') {
+        this.send(connection, { type: 'tool_result', stage: e.stage, sessionId, tool: e.tool, result: e.result, isError: e.isError });
+      }
+    };
+
+    const result = await runVibeCodingPipeline({
+      anthropic: this.anthropic,
+      env: this.env,
+      userRequest: userContent,
+      projectContext: state.projectContext,
+      memories: memories.map((m) => m.memory),
+      ragContext,
+      provider: modelSelection?.provider ?? this.env.AI_PROVIDER ?? 'anthropic',
+      nvidiaModelId: modelSelection?.nvidiaModelId,
+      onEvent: forwardStageEvent,
+    });
+
+    const newMessages: ChatMessage[] = [
+      ...state.messages,
+      { role: 'user', content: userContent, timestamp: Date.now() },
+      { role: 'assistant', content: result.implementationResponse, timestamp: Date.now() },
+    ].slice(-60);
+    this.setState({ ...state, messages: newMessages, lastActive: Date.now() });
+
+    mem0Add(this.env.MEM0_API_KEY,
+      [{ role: 'user', content: userContent }, { role: 'assistant', content: result.implementationResponse }],
+      userId, { repo: state.projectContext.repo, ts: new Date().toISOString(), mode: 'build' },
+    ).catch((err) => console.warn('[mem0] add failed:', err));
+
+    this.send(connection, {
+      type: 'build_end',
+      sessionId,
+      spec: result.spec,
+      plan: result.plan,
+      finalResponse: result.implementationResponse,
+      toolCallsLog: result.toolCallsLog,
+      suggestions: result.suggestions,
+    });
   }
 
   private async handleIngest(connection: Connection, msg: WSMessage): Promise<void> {

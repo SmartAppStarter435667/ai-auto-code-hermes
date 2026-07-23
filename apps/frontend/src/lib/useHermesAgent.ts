@@ -108,6 +108,13 @@ function loadStoredModel(userId: string): ModelSelection {
   }
 }
 
+export interface FeatureSuggestion {
+  label: string;
+  rationale: string;
+}
+
+export type PipelineStage = 'spec' | 'plan' | 'implement' | 'suggest';
+
 interface UseHermesAgentReturn {
   messages: ChatEntry[];
   status: ConnectionStatus;
@@ -116,7 +123,10 @@ interface UseHermesAgentReturn {
   activeTools: ToolEvent[]; // currently in-flight (tool_call without a matching tool_result yet)
   charsStreamedSoFar: number;
   currentModel: ModelSelection;
+  buildStage: PipelineStage | null;
+  suggestions: FeatureSuggestion[];
   send: (content: string) => void;
+  sendBuild: (content: string) => void;
   ingest: (text: string, metadata?: Record<string, unknown>) => void;
   clearMemory: () => void;
   setContext: (context: Record<string, unknown>) => void;
@@ -136,6 +146,8 @@ export function useHermesAgent({ userId, sessionId, onToolEvent }: UseHermesAgen
   const [activeTools, setActiveTools] = useState<ToolEvent[]>([]);
   const [charsStreamedSoFar, setCharsStreamedSoFar] = useState(0);
   const [currentModel, setCurrentModel] = useState<ModelSelection>(() => loadStoredModel(userId));
+  const [buildStage, setBuildStage] = useState<PipelineStage | null>(null);
+  const [suggestions, setSuggestions] = useState<FeatureSuggestion[]>([]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -204,6 +216,46 @@ export function useHermesAgent({ userId, sessionId, onToolEvent }: UseHermesAgen
         break;
       }
 
+      case 'build_start': {
+        const id = crypto.randomUUID();
+        streamingIdRef.current = id;
+        setIsStreaming(true);
+        setIsThinking(true);
+        setCharsStreamedSoFar(0);
+        setSuggestions([]);
+        setBuildStage('spec');
+        setMessages((prev) => [...prev, { id, role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true }]);
+        break;
+      }
+
+      case 'build_stream_chunk': {
+        const chunk = msg.content as string;
+        setIsThinking(false);
+        setBuildStage((msg.stage as PipelineStage) ?? null);
+        setCharsStreamedSoFar((n) => n + (chunk?.length ?? 0));
+        // Only the 'implement' stage's text is the actual chat-visible
+        // response — spec/plan/suggest stages are shown via buildStage +
+        // the final structured build_end payload, not streamed inline,
+        // so the message bubble doesn't fill up with intermediate spec text.
+        if (msg.stage === 'implement' && chunk) {
+          setMessages((prev) => prev.map((m) => (m.id === streamingIdRef.current ? { ...m, content: m.content + chunk } : m)));
+        }
+        break;
+      }
+
+      case 'build_end': {
+        setMessages((prev) => prev.map((m) => (m.id === streamingIdRef.current
+          ? { ...m, isStreaming: false, content: (msg.finalResponse as string) || m.content, toolCalls: msg.toolCallsLog as ChatEntry['toolCalls'] }
+          : m)));
+        streamingIdRef.current = null;
+        setIsStreaming(false);
+        setIsThinking(false);
+        setActiveTools([]);
+        setBuildStage(null);
+        setSuggestions((msg.suggestions as FeatureSuggestion[]) ?? []);
+        break;
+      }
+
       case 'tool_call': {
         setIsThinking(false);
         const ev: ToolEvent = { type: 'tool_call', tool: msg.tool as string, input: msg.input, timestamp: Date.now() };
@@ -244,6 +296,12 @@ export function useHermesAgent({ userId, sessionId, onToolEvent }: UseHermesAgen
     rawSend({ type: 'chat', userId, sessionId, content });
   }, [rawSend, userId, sessionId]);
 
+  const sendBuild = useCallback((content: string) => {
+    if (!content.trim()) return;
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', content, timestamp: Date.now() }]);
+    rawSend({ type: 'build', userId, sessionId, content });
+  }, [rawSend, userId, sessionId]);
+
   const ingest = useCallback((text: string, metadata?: Record<string, unknown>) => rawSend({ type: 'ingest', text, metadata }), [rawSend]);
   const clearMemory = useCallback(() => { rawSend({ type: 'clear_memory', userId }); setMessages([]); }, [rawSend, userId]);
   const setContext = useCallback((context: Record<string, unknown>) => rawSend({ type: 'set_context', context }), [rawSend]);
@@ -255,7 +313,7 @@ export function useHermesAgent({ userId, sessionId, onToolEvent }: UseHermesAgen
   const clearMessages = useCallback(() => setMessages([]), []);
 
   return {
-    messages, status, isStreaming, isThinking, activeTools, charsStreamedSoFar, currentModel,
-    send, ingest, clearMemory, setContext, setModel, clearMessages,
+    messages, status, isStreaming, isThinking, activeTools, charsStreamedSoFar, currentModel, buildStage, suggestions,
+    send, sendBuild, ingest, clearMemory, setContext, setModel, clearMessages,
   };
 }

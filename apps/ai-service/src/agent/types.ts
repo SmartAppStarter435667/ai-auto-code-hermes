@@ -29,7 +29,7 @@ export interface AgentState {
 }
 
 export interface WSMessage {
-  type: 'chat' | 'ingest' | 'clear_memory' | 'set_context' | 'set_model' | 'ping';
+  type: 'chat' | 'build' | 'ingest' | 'clear_memory' | 'set_context' | 'set_model' | 'ping';
   userId?: string;
   sessionId?: string;
   content?: string;

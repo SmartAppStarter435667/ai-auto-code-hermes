@@ -44,9 +44,10 @@ export default function AIMenu({ userId, currentRepo, currentBranch, currentFile
   }, []);
 
   const {
-    messages, status, isStreaming, isThinking, activeTools, charsStreamedSoFar, currentModel,
-    send, ingest, clearMemory, setContext, setModel, clearMessages,
+    messages, status, isStreaming, isThinking, activeTools, charsStreamedSoFar, currentModel, buildStage, suggestions,
+    send, sendBuild, ingest, clearMemory, setContext, setModel, clearMessages,
   } = useHermesAgent({ userId, sessionId, onToolEvent: handleToolEvent });
+  const [mode, setMode] = useState<'chat' | 'build'>('chat');
 
   useEffect(() => {
     if (status !== 'connected') return;
@@ -59,9 +60,15 @@ export default function AIMenu({ userId, currentRepo, currentBranch, currentFile
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
     setTurnCompletedTools([]); // fresh progress list for this turn
-    send(trimmed);
+    if (mode === 'build') sendBuild(trimmed); else send(trimmed);
     setInput('');
     inputRef.current?.focus();
+  };
+
+  const handleSuggestionClick = (label: string) => {
+    if (isStreaming) return;
+    setTurnCompletedTools([]);
+    sendBuild(label);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -137,7 +144,38 @@ export default function AIMenu({ userId, currentRepo, currentBranch, currentFile
         </div>
       )}
 
-      <InputArea value={input} isStreaming={isStreaming} onChange={setInput} onKeyDown={handleKeyDown} onSubmit={handleSubmit} inputRef={inputRef} />
+      {buildStage && (
+        <div style={{
+          padding: '4px 16px', fontSize: 10, color: '#00ffb4', letterSpacing: 1,
+          background: '#080e18', borderTop: '1px solid #131e2e',
+        }}>
+          {{ spec: '📋 仕様を整理中…', plan: '🗺 計画を立案中…', implement: '⚡ 実装中…', suggest: '💡 次の提案を検討中…' }[buildStage]}
+        </div>
+      )}
+
+      {suggestions.length > 0 && !isStreaming && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 16px 0', borderTop: '1px solid #1a2230', background: '#080a0e' }}>
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => handleSuggestionClick(s.label)}
+              title={s.rationale}
+              style={{
+                background: '#0a1510', border: '1px solid #1a4a28', color: '#4ade80',
+                fontFamily: 'inherit', fontSize: 11, padding: '4px 10px', borderRadius: 12,
+                cursor: 'pointer', letterSpacing: 0.3,
+              }}
+            >
+              + {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <InputArea
+        value={input} isStreaming={isStreaming} onChange={setInput} onKeyDown={handleKeyDown} onSubmit={handleSubmit} inputRef={inputRef}
+        mode={mode} onModeChange={setMode}
+      />
     </div>
   );
 }
@@ -188,17 +226,41 @@ function EmptyState({ repo }: { repo?: string }) {
   );
 }
 
-function InputArea({ value, isStreaming, onChange, onKeyDown, onSubmit, inputRef }: {
+function InputArea({ value, isStreaming, onChange, onKeyDown, onSubmit, inputRef, mode, onModeChange }: {
   value: string; isStreaming: boolean; onChange: (v: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void; onSubmit: () => void;
   inputRef: React.RefObject<HTMLTextAreaElement>;
+  mode: 'chat' | 'build'; onModeChange: (m: 'chat' | 'build') => void;
 }) {
   return (
-    <div style={{ borderTop: '1px solid #1a2230', background: '#080a0e', padding: '10px 16px', display: 'flex', gap: 10, alignItems: 'flex-end', zIndex: 2 }}>
+    <div style={{ borderTop: '1px solid #1a2230', background: '#080a0e', padding: '8px 16px 10px', zIndex: 2 }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+        {(['chat', 'build'] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => onModeChange(m)}
+            disabled={isStreaming}
+            style={{
+              background: mode === m ? '#0d2a1f' : 'transparent',
+              border: `1px solid ${mode === m ? '#1a4a28' : '#1a2535'}`,
+              color: mode === m ? '#4ade80' : '#3a5468',
+              fontFamily: 'inherit', fontSize: 10, padding: '3px 10px', borderRadius: 3,
+              cursor: isStreaming ? 'not-allowed' : 'pointer', letterSpacing: 1,
+            }}
+          >
+            {m === 'chat' ? '💬 CHAT' : '🏗 BUILD'}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
       <textarea
         ref={inputRef} value={value} disabled={isStreaming}
         onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown}
-        placeholder={isStreaming ? '⌛ Hermes is thinking…' : '▸ Message Hermes — Shift+Enter for newline'}
+        placeholder={
+          isStreaming ? '⌛ Hermes is thinking…'
+          : mode === 'build' ? '🏗 Describe the app or feature to build — Hermes will spec, plan, then implement it'
+          : '▸ Message Hermes — Shift+Enter for newline'
+        }
         rows={1}
         style={{
           flex: 1, background: '#0d1520', border: '1px solid #1e2a36', color: '#c8d3e0', fontFamily: 'inherit',
@@ -218,6 +280,7 @@ function InputArea({ value, isStreaming, onChange, onKeyDown, onSubmit, inputRef
       >
         {isStreaming ? '…' : '↑ SEND'}
       </button>
+      </div>
     </div>
   );
 }
