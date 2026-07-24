@@ -16,13 +16,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       
+      - name: Check R2 state-backend secrets are set
+        run: |
+          if [ -z "${{ secrets.R2_ACCESS_KEY_ID }}" ] || [ -z "${{ secrets.R2_SECRET_ACCESS_KEY }}" ]; then
+            echo "::error::R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are not set yet."
+            echo "Run 'Bootstrap Terraform State Bucket' first (Actions tab, Run workflow),"
+            echo "then create an R2 API Token (Cloudflare dashboard -> R2 -> Manage R2 API Tokens)"
+            echo "and add its two values as those two GitHub secrets."
+            exit 1
+          fi
+
       - name: Terraform Init & Apply
         working-directory: ./terraform
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           terraform init \
-            -backend-config="endpoint=https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            -backend-config="endpoints.s3=https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
             -backend-config="access_key=${{ secrets.R2_ACCESS_KEY_ID }}" \
             -backend-config="secret_key=${{ secrets.R2_SECRET_ACCESS_KEY }}"
           terraform apply -auto-approve \
