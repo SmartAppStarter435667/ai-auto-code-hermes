@@ -21,7 +21,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          terraform init
+          terraform init \
+            -backend-config="endpoint=https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            -backend-config="access_key=${{ secrets.R2_ACCESS_KEY_ID }}" \
+            -backend-config="secret_key=${{ secrets.R2_SECRET_ACCESS_KEY }}"
           terraform apply -auto-approve \
             -var="cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -var="account_id=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"

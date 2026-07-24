@@ -1,0 +1,54 @@
+name: Bootstrap Terraform State Bucket
+
+# Run this ONCE, manually (Actions tab -> this workflow -> Run workflow).
+# Creates the R2 bucket that terraform/backend.tf will use to remember what
+# it already created — this is the actual fix for the recurring "already
+# exists" conflicts. No local CLI needed; this just calls the Cloudflare
+# API directly with curl, entirely from the Actions runner.
+#
+# After this succeeds once, terraform/backend.tf (added in this same batch)
+# takes over automatically on every future run — nothing else to trigger
+# manually again.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create R2 bucket for Terraform state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "hermes-tfstate"}')
+
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          CODE=$(echo "$RESPONSE" | tail -n1)
+
+          echo "$BODY"
+
+          if [ "$CODE" = "200" ]; then
+            echo "✅ Bucket created."
+          elif echo "$BODY" | grep -q "10004"; then
+            echo "✅ Bucket already exists — nothing to do, this is safe to re-run."
+          else
+            echo "❌ Unexpected response (HTTP $CODE)"
+            exit 1
+          fi
+
+      - name: Next step
+        run: |
+          echo "### Next step (one-time, manual)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Cloudflare dashboard -> R2 -> Manage R2 API Tokens -> Create API Token" >> "$GITHUB_STEP_SUMMARY"
+          echo "   (permissions: Object Read & Write, scoped to the hermes-tfstate bucket)" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Add two GitHub secrets from what it shows you:" >> "$GITHUB_STEP_SUMMARY"
+          echo "   - R2_ACCESS_KEY_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "   - R2_SECRET_ACCESS_KEY" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. After that, every edge-ai-deploy.yml run uses remote state automatically — no more manual deletes." >> "$GITHUB_STEP_SUMMARY"
